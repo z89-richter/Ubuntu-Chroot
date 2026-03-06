@@ -14,16 +14,16 @@ RUN apt-get update && apt-get upgrade -y && \
     rm -rf /etc/apt/sources.list.d/* && \
     cat > /etc/apt/sources.list << EOF
 # For arm64 (native architecture)
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-updates main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-backports main restricted universe multiverse
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-security main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ questing main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ questing-updates main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ questing-backports main restricted universe multiverse
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ questing-security main restricted universe multiverse
 
 # For amd64 (the foreign architecture) - ONLY include the 'main' component
-deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ noble main
-deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ noble-updates main
-deb [arch=amd64] http://security.ubuntu.com/ubuntu/ noble-backports main
-deb [arch=amd64] http://security.ubuntu.com/ubuntu/ noble-security main
+deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ questing main
+deb [arch=amd64] http://archive.ubuntu.com/ubuntu/ questing-updates main
+deb [arch=amd64] http://security.ubuntu.com/ubuntu/ questing-backports main
+deb [arch=amd64] http://security.ubuntu.com/ubuntu/ questing-security main
 EOF
 
 RUN cat > /etc/apt/preferences.d/99-multiarch-pinning << EOF
@@ -164,6 +164,7 @@ RUN apt-get update && \
     android-sdk-libsparse-utils \
     aria2 \
     jq \
+    bsdiff \
     && apt-get purge -y gdm3 gnome-session gnome-shell whoopsie && \
     apt-get autoremove -y
 
