@@ -1,6 +1,6 @@
 # Dockerfile.builder
 # Stage 1: Build and customize the rootfs for development
-FROM --platform=linux/arm64 ubuntu:24.04 AS customizer
+FROM --platform=linux/arm64 ubuntu:25.10 AS customizer
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -101,6 +101,7 @@ RUN apt-get update && \
     xz-utils \
     tar \
     gzip \
+    lz4 \
     # System tools
     htop \
     vim \
@@ -160,6 +161,9 @@ RUN apt-get update && \
     ltrace \
     heimdall-flash \
     docker.io \
+    android-sdk-libsparse-utils \
+    aria2 \
+    jq \
     && apt-get purge -y gdm3 gnome-session gnome-shell whoopsie && \
     apt-get autoremove -y
 
