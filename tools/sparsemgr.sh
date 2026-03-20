@@ -8,21 +8,6 @@ DEFAULT_CHROOT_DIR="/data/local/ubuntu-chroot"
 CHROOT_DIR="${CHROOT_DIR:-$DEFAULT_CHROOT_DIR}"
 SCRIPT_NAME="$(basename "$0")"
 
-# --- Debug mode ---
-LOGGING_ENABLED=${LOGGING_ENABLED:-0}
-
-if [ "$LOGGING_ENABLED" -eq 1 ]; then
-    LOG_DIR="${CHROOT_DIR%/*}/logs"
-    mkdir -p "$LOG_DIR"
-    LOG_FILE="$LOG_DIR/$SCRIPT_NAME.txt"
-    LOG_FIFO="$LOG_DIR/$SCRIPT_NAME.fifo"
-    rm -f "$LOG_FIFO" && mkfifo "$LOG_FIFO" 2>/dev/null
-    echo "=== Logging started at $(date) ===" >> "$LOG_FILE"
-    busybox tee -a "$LOG_FILE" < "$LOG_FIFO" &
-    exec >> "$LOG_FIFO" 2>> "$LOG_FILE"
-    set -x
-fi
-
 # Parse command line arguments
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -53,6 +38,31 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# --- Busybox resolution ---
+if [ -x "$CHROOT_DIR/bin/busybox" ]; then
+    export BUSYBOX="$CHROOT_DIR/bin/busybox"
+elif command -v busybox >/dev/null 2>&1; then
+    export BUSYBOX="busybox"
+else
+    echo "[ERROR] No busybox found (checked $CHROOT_DIR/bin/busybox and PATH). Aborting." >&2
+    exit 1
+fi
+
+# --- Debug mode ---
+LOGGING_ENABLED=${LOGGING_ENABLED:-0}
+
+if [ "$LOGGING_ENABLED" -eq 1 ]; then
+    LOG_DIR="${CHROOT_DIR%/*}/logs"
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="$LOG_DIR/$SCRIPT_NAME.txt"
+    LOG_FIFO="$LOG_DIR/$SCRIPT_NAME.fifo"
+    rm -f "$LOG_FIFO" && mkfifo "$LOG_FIFO" 2>/dev/null
+    echo "=== Logging started at $(date) ===" >> "$LOG_FILE"
+    "${BUSYBOX}" tee -a "$LOG_FILE" < "$LOG_FIFO" &
+    exec >> "$LOG_FIFO" 2>> "$LOG_FILE"
+    set -x
+fi
 
 # Set derived paths
 ROOTFS_DIR="$CHROOT_DIR/rootfs"
@@ -86,7 +96,7 @@ stop_chroot_if_running() {
         log "Chroot stopped successfully"
 
         # Give a moment for processes to fully stop
-        busybox sleep 2
+        "${BUSYBOX}" sleep 2
     else
         log "Chroot is not running - proceeding with migration"
     fi
@@ -95,12 +105,6 @@ stop_chroot_if_running() {
 # Check for required tools
 check_requirements() {
     log "Checking for required tools..."
-
-    # Check for busybox
-    if ! command -v busybox >/dev/null 2>&1; then
-        error "busybox not found. This script requires busybox."
-        exit 1
-    fi
 
     # Check for mkfs.ext4 or mke2fs
     if ! command -v mkfs.ext4 >/dev/null 2>&1 && ! command -v mke2fs >/dev/null 2>&1; then
@@ -117,13 +121,13 @@ cleanup_on_error() {
     log "Error occurred, cleaning up..."
 
     # Unmount sparse directory if mounted
-    if busybox mountpoint -q "$ROOTFS_SPARSE" 2>/dev/null; then
-        busybox umount "$ROOTFS_SPARSE" 2>/dev/null || busybox umount -f "$ROOTFS_SPARSE" 2>/dev/null
+    if "${BUSYBOX}" mountpoint -q "$ROOTFS_SPARSE" 2>/dev/null; then
+        "${BUSYBOX}" umount "$ROOTFS_SPARSE" 2>/dev/null || "${BUSYBOX}" umount -f "$ROOTFS_SPARSE" 2>/dev/null
     fi
 
     # Remove sparse directory and image
-    busybox rm -rf "$ROOTFS_SPARSE" 2>/dev/null
-    busybox rm -f "${ROOTFS_IMG}.tmp" 2>/dev/null
+    "${BUSYBOX}" rm -rf "$ROOTFS_SPARSE" 2>/dev/null
+    "${BUSYBOX}" rm -f "${ROOTFS_IMG}.tmp" 2>/dev/null
 
     log "Cleanup completed. Original rootfs preserved."
     exit 1
@@ -140,15 +144,15 @@ create_sparse_image() {
     log "Using truncate to create ${size_gb}GB sparse file..."
     if ! truncate -s "${size_gb}G" "$img_path" 2>/dev/null; then
         log "Built-in truncate failed, trying busybox truncate..."
-        if ! busybox truncate -s "${size_gb}G" "$img_path" 2>/dev/null; then
+        if ! "${BUSYBOX}" truncate -s "${size_gb}G" "$img_path" 2>/dev/null; then
             error "Failed to create sparse image with both truncate and busybox truncate"
             return 1
         fi
     fi
 
     # Force filesystem sync - CRITICAL for Android
-    busybox sync
-    busybox sleep 2
+    "${BUSYBOX}" sync
+    "${BUSYBOX}" sleep 2
 
     # Verify file exists
     if [ ! -f "$img_path" ]; then
@@ -156,36 +160,36 @@ create_sparse_image() {
         return 1
     fi
 
-    local actual_size=$(busybox stat -c%s "$img_path" 2>/dev/null || echo "0")
+    local actual_size=$("${BUSYBOX}" stat -c%s "$img_path" 2>/dev/null || echo "0")
     log "File created with size: $actual_size bytes"
 
     if [ "$actual_size" = "0" ]; then
         error "File size is zero - creation failed"
-        busybox rm -f "$img_path"
+        "${BUSYBOX}" rm -f "$img_path"
         return 1
     fi
 
     # Another sync before formatting
-    busybox sync
-    busybox sleep 1
+    "${BUSYBOX}" sync
+    "${BUSYBOX}" sleep 1
 
     log "Formatting sparse image with ext4..."
     # Try mkfs.ext4 first, fallback to mke2fs
     if command -v mkfs.ext4 >/dev/null 2>&1; then
         if ! mkfs.ext4 -F -L "ubuntu-chroot" "$img_path" 2>&1; then
             error "Failed to format sparse image with mkfs.ext4"
-            busybox rm -f "$img_path"
+            "${BUSYBOX}" rm -f "$img_path"
             return 1
         fi
     elif command -v mke2fs >/dev/null 2>&1; then
         if ! mke2fs -t ext4 -F -L "ubuntu-chroot" "$img_path" 2>&1; then
             error "Failed to format sparse image with mke2fs"
-            busybox rm -f "$img_path"
+            "${BUSYBOX}" rm -f "$img_path"
             return 1
         fi
     else
         error "No ext4 formatting tool available"
-        busybox rm -f "$img_path"
+        "${BUSYBOX}" rm -f "$img_path"
         return 1
     fi
 
@@ -199,10 +203,10 @@ mount_sparse_image() {
     local mount_path="$2"
 
     log "Mounting sparse image to $mount_path"
-    busybox mkdir -p "$mount_path"
+    "${BUSYBOX}" mkdir -p "$mount_path"
 
     # Use busybox mount
-    if ! busybox mount -t ext4 -o loop,rw,noatime,nodiratime,data=ordered,commit=30 "$img_path" "$mount_path" 2>/dev/null; then
+    if ! "${BUSYBOX}" mount -t ext4 -o loop,rw,noatime,nodiratime,data=ordered,commit=30 "$img_path" "$mount_path" 2>/dev/null; then
         # Fallback to system mount if busybox mount fails
         if ! mount -t ext4 -o loop,rw,noatime,nodiratime,data=ordered,commit=30 "$img_path" "$mount_path" 2>/dev/null; then
             error "Failed to mount sparse image"
@@ -224,10 +228,10 @@ migrate_rootfs() {
     log "Destination: $dest_dir"
 
     # Create destination directory
-    busybox mkdir -p "$dest_dir"
+    "${BUSYBOX}" mkdir -p "$dest_dir"
 
     # Use busybox tar to copy everything while preserving permissions and ownership
-    if ! (cd "$source_dir" && busybox tar -cf - . | (cd "$dest_dir" && busybox tar -xf -)); then
+    if ! (cd "$source_dir" && "${BUSYBOX}" tar -cf - . | (cd "$dest_dir" && "${BUSYBOX}" tar -xf -)); then
         error "Failed to migrate rootfs data"
         return 1
     fi
@@ -241,7 +245,7 @@ migrate_to_sparse() {
     local size_input="$1"
 
     # Remove 'GB' suffix if present and extract numeric value
-    local size_gb=$(echo "$size_input" | busybox sed 's/[^0-9]//g')
+    local size_gb=$(echo "$size_input" | "${BUSYBOX}" sed 's/[^0-9]//g')
 
     if [ -z "$size_gb" ]; then
         error "Invalid size specified: $size_input"
@@ -256,7 +260,7 @@ migrate_to_sparse() {
     fi
 
     # Check if rootfs directory exists and is not empty
-    if [ ! -d "$ROOTFS_DIR" ] || [ -z "$(busybox ls -A "$ROOTFS_DIR" 2>/dev/null)" ]; then
+    if [ ! -d "$ROOTFS_DIR" ] || [ -z "$("${BUSYBOX}" ls -A "$ROOTFS_DIR" 2>/dev/null)" ]; then
         error "Rootfs directory not found or is empty"
         exit 1
     fi
@@ -300,7 +304,7 @@ migrate_to_sparse() {
 
     # Unmount sparse image
     log "Unmounting sparse image..."
-    if ! busybox umount "$ROOTFS_SPARSE" 2>/dev/null && ! umount "$ROOTFS_SPARSE" 2>/dev/null; then
+    if ! "${BUSYBOX}" umount "$ROOTFS_SPARSE" 2>/dev/null && ! umount "$ROOTFS_SPARSE" 2>/dev/null; then
         error "Failed to unmount sparse image"
         cleanup_on_error
     fi
@@ -312,30 +316,30 @@ migrate_to_sparse() {
     local backup_dir="${ROOTFS_DIR}.backup"
 
     # Rename original rootfs to backup
-    if ! busybox mv "$ROOTFS_DIR" "$backup_dir"; then
+    if ! "${BUSYBOX}" mv "$ROOTFS_DIR" "$backup_dir"; then
         error "Failed to backup original rootfs directory"
         cleanup_on_error
     fi
 
     # Rename sparse directory to rootfs
-    if ! busybox mv "$ROOTFS_SPARSE" "$ROOTFS_DIR"; then
+    if ! "${BUSYBOX}" mv "$ROOTFS_SPARSE" "$ROOTFS_DIR"; then
         error "Failed to rename sparse directory"
         # Try to restore original rootfs
-        busybox mv "$backup_dir" "$ROOTFS_DIR" 2>/dev/null || true
+        "${BUSYBOX}" mv "$backup_dir" "$ROOTFS_DIR" 2>/dev/null || true
         cleanup_on_error
     fi
 
     # Move image to final location
-    if ! busybox mv "$tmp_img" "$ROOTFS_IMG"; then
+    if ! "${BUSYBOX}" mv "$tmp_img" "$ROOTFS_IMG"; then
         error "Failed to move sparse image to final location"
         # Try to restore original rootfs
-        busybox rm -rf "$ROOTFS_DIR" 2>/dev/null || true
-        busybox mv "$backup_dir" "$ROOTFS_DIR" 2>/dev/null || true
+        "${BUSYBOX}" rm -rf "$ROOTFS_DIR" 2>/dev/null || true
+        "${BUSYBOX}" mv "$backup_dir" "$ROOTFS_DIR" 2>/dev/null || true
         cleanup_on_error
     fi
 
     # Remove backup directory after successful migration
-    busybox rm -rf "$backup_dir"
+    "${BUSYBOX}" rm -rf "$backup_dir"
 
     # Clear error trap
     trap - ERR
