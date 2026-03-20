@@ -32,9 +32,27 @@ detect_root() {
     fi
 }
 
+setup_busybox() {
+    mkdir -p "$CHROOT_DIR/bin"
+
+    if unzip -oj "$ZIPFILE" 'tools/bin/busybox' -d "$CHROOT_DIR/bin" >&2 \
+        && chmod 755 "$CHROOT_DIR/bin/busybox"; then
+        echo "- Busybox extracted successfully" >&2
+        export BUSYBOX="$CHROOT_DIR/bin/busybox"
+    else
+        echo "- Failed to extract busybox, falling back to system busybox" >&2
+        if ! command -v busybox >/dev/null 2>&1; then
+            echo "- System busybox not found. Aborting." >&2
+            exit 1
+        fi
+        export BUSYBOX="busybox"
+    fi
+}
+
 # Extract core chroot files
 setup_chroot() {
     mkdir -p "$CHROOT_DIR"
+    setup_busybox
     unzip -oj "$ZIPFILE" 'tools/chroot.sh' -d "$CHROOT_DIR" >&2
     unzip -oj "$ZIPFILE" 'tools/start-hotspot' -d "$CHROOT_DIR" >&2
     unzip -oj "$ZIPFILE" 'tools/sparsemgr.sh' -d "$CHROOT_DIR" >&2
@@ -159,7 +177,7 @@ extract_sparse() {
     # Create and format sparse image
     if ! truncate -s "${SPARSE_IMAGE_SIZE}G" "$img_file"; then
         echo "- Built-in truncate failed, trying busybox truncate..."
-        busybox truncate -s "${SPARSE_IMAGE_SIZE}G" "$img_file" || return 1
+        "${BUSYBOX}" truncate -s "${SPARSE_IMAGE_SIZE}G" "$img_file" || return 1
     fi
     mkfs.ext4 -F -L "ubuntu-chroot" "$img_file" || {
         rm -f "$img_file"
