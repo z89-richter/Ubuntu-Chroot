@@ -1,6 +1,6 @@
 # Changelog
 
-## v4.4 (2026-03-20)
+## v4.4 (2026-03-23)
 
 - readme: add Brutal-Busybox to the project credits
 - feat: Add busybox binary and standardize its usage across scripts.
