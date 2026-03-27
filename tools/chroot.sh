@@ -23,6 +23,16 @@ SILENT=0
 SKIP_POST_EXEC=0
 CHROOT_SETUP_IN_PROGRESS=0
 
+# --- Busybox resolution (must happen before logging block) ---
+if [ -x "$BASE_CHROOT_DIR/bin/busybox" ]; then
+    export BUSYBOX="$BASE_CHROOT_DIR/bin/busybox"
+elif command -v busybox >/dev/null 2>&1; then
+    export BUSYBOX="busybox"
+else
+    echo "[ERROR] No busybox found (checked $BASE_CHROOT_DIR/bin/busybox and PATH). Aborting." >&2
+    exit 1
+fi
+
 # --- Debug mode ---
 LOGGING_ENABLED=${LOGGING_ENABLED:-0}
 
@@ -33,7 +43,7 @@ if [ "$LOGGING_ENABLED" -eq 1 ]; then
     LOG_FIFO="$LOG_DIR/$SCRIPT_NAME.fifo"
     rm -f "$LOG_FIFO" && mkfifo "$LOG_FIFO" 2>/dev/null
     echo "=== Logging started at $(date) ===" >> "$LOG_FILE"
-    busybox tee -a "$LOG_FILE" < "$LOG_FIFO" &
+    "${BUSYBOX}" tee -a "$LOG_FILE" < "$LOG_FIFO" &
     exec >> "$LOG_FIFO" 2>> "$LOG_FILE"
     set -x
 fi
@@ -121,7 +131,7 @@ _execute_in_ns() {
         local ns_flags
         ns_flags=$(_get_ns_flags)
 
-        busybox nsenter --target "$holder_pid" $ns_flags -- "$@"
+        "${BUSYBOX}" nsenter --target "$holder_pid" $ns_flags -- "$@"
     else
         # If no namespace holder is running, execute command directly.
         "$@"
@@ -427,7 +437,7 @@ create_namespace() {
     # Run a subshell within the new namespaces.
     # This subshell backgrounds "sleep" and then echoes the correct PID of the
     # "sleep" process, guaranteeing we target the process inside the namespaces
-    unshare $unshare_flags sh -c 'busybox sleep infinity & echo $! > "$1"' -- "$pid_file"
+    unshare $unshare_flags sh -c '"$2" sleep infinity & echo $! > "$1"' -- "$pid_file" "$BUSYBOX"
 
     # Wait a moment for the PID file to be written
     local attempts=0
@@ -523,7 +533,7 @@ start_chroot() {
         # Proper mount propagation for containerization tools
         # Make the entire mount tree private within our namespace
         # This prevents "peer group" conflicts that cause pivot_root to fail
-        if run_in_ns busybox mount --make-rprivate / 2>/dev/null; then
+        if run_in_ns "${BUSYBOX}" mount --make-rprivate / 2>/dev/null; then
             log "Set entire namespace to recursive private propagation"
         else
             warn "Failed to set root to rprivate propagation"
@@ -626,7 +636,7 @@ start_chroot() {
 
     if [ "$SKIP_POST_EXEC" -eq 0 ] && [ -f "$POST_EXEC_SCRIPT" ] && [ -x "$POST_EXEC_SCRIPT" ]; then
         log "Running post-execution script..."
-        SCRIPT_B64=$(busybox base64 -w 0 "$POST_EXEC_SCRIPT")
+        SCRIPT_B64=$("${BUSYBOX}" base64 -w 0 "$POST_EXEC_SCRIPT")
         run_in_chroot "echo '$SCRIPT_B64' | base64 -d | bash"
     fi
 
@@ -840,7 +850,7 @@ backup_chroot() {
                 log "Sparse image mounted cleanly for backup."
 
                 # Run tar on the clean, temporary mount without any namespace.
-                busybox tar -czf "$backup_path" -C "$temp_mount_point" .
+                "${BUSYBOX}" tar -czf "$backup_path" -C "$temp_mount_point" .
                 tar_exit_code=$?
 
                 # Clean up immediately.
@@ -857,7 +867,7 @@ backup_chroot() {
         # --- Directory Method (the simple, traditional case) ---
         log "Using directory backup method."
         # No namespace needed, as stop_chroot should have cleaned everything.
-        busybox tar -czf "$backup_path" -C "$CHROOT_PATH" .
+        "${BUSYBOX}" tar -czf "$backup_path" -C "$CHROOT_PATH" .
         tar_exit_code=$?
     fi
 
@@ -1000,7 +1010,7 @@ resize_sparse() {
         log "Truncating sparse file to ${new_size_gb}G..."
         if ! truncate -s "${new_size_gb}G" "$ROOTFS_IMG" 2>/dev/null; then
             log "Built-in truncate failed, trying busybox truncate..."
-            busybox truncate -s "${new_size_gb}G" "$ROOTFS_IMG" 2>/dev/null || {
+            "${BUSYBOX}" truncate -s "${new_size_gb}G" "$ROOTFS_IMG" 2>/dev/null || {
                 error "Failed to truncate file with both truncate and busybox truncate"
                 exit 1
             }
@@ -1061,7 +1071,7 @@ restore_chroot() {
     if ! run_in_ns mkdir -p "$CHROOT_PATH"; then
         error "Failed to create rootfs directory: $CHROOT_PATH"; exit 1;
     fi
-    if run_in_ns busybox tar -xzf "$backup_path" -C "$CHROOT_PATH" 2>/dev/null; then
+    if run_in_ns "${BUSYBOX}" tar -xzf "$backup_path" -C "$CHROOT_PATH" 2>/dev/null; then
         log "Chroot restored successfully from: $backup_path"
     else
         error "Failed to extract backup archive"; exit 1;
@@ -1136,13 +1146,10 @@ uninstall_chroot() {
 }
 
 # --- Main Script Logic ---
-
 if [ "$(id -u)" -ne 0 ]; then
-    error "This script must be run as root."; exit 1;
+    error "This script must be run as root."; exit 1
 fi
-if ! command -v busybox >/dev/null 2>&1; then
-    error "busybox command not found. Please install busybox."; exit 1;
-fi
+
 if [ $# -eq 0 ]; then
     set -- start
 fi

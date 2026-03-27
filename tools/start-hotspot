@@ -28,6 +28,16 @@ IP_END="192.168.42.50"
 
 SCRIPT_NAME="$(basename "$0")"
 
+# --- Busybox resolution ---
+if [ -x "$BASE_CHROOT_DIR/bin/busybox" ]; then
+    export BUSYBOX="$BASE_CHROOT_DIR/bin/busybox"
+elif command -v busybox >/dev/null 2>&1; then
+    export BUSYBOX="busybox"
+else
+    echo "[ERROR] No busybox found (checked $BASE_CHROOT_DIR/bin/busybox and PATH). Aborting." >&2
+    exit 1
+fi
+
 # --- Debug mode ---
 LOGGING_ENABLED=${LOGGING_ENABLED:-0}
 
@@ -38,7 +48,7 @@ if [ "$LOGGING_ENABLED" -eq 1 ]; then
     LOG_FIFO="$LOG_DIR/$SCRIPT_NAME.fifo"
     rm -f "$LOG_FIFO" && mkfifo "$LOG_FIFO" 2>/dev/null
     echo "=== Logging started at $(date) ===" >> "$LOG_FILE"
-    busybox tee -a "$LOG_FILE" < "$LOG_FIFO" &
+    "${BUSYBOX}" tee -a "$LOG_FILE" < "$LOG_FIFO" &
     exec >> "$LOG_FIFO" 2>> "$LOG_FILE"
     set -x
 fi
@@ -93,7 +103,7 @@ _execute_in_ns() {
         local ns_flags
         ns_flags=$(_get_ns_flags)
 
-        busybox nsenter --target "$holder_pid" $ns_flags -- "$@"
+        "${BUSYBOX}" nsenter --target "$holder_pid" $ns_flags -- "$@"
     else
         # If no namespace holder is running, execute command directly.
         "$@"
